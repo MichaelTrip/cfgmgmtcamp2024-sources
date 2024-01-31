@@ -1,0 +1,127 @@
+stages:
+  - build_gitops_container
+  - destroy_tst
+  - deploy_tst
+  - test_tst
+  - refresh_acc
+  - refresh_prd
+
+variables:
+  KUBECTL_IMAGE: "gitlab.example.com:5050/kubernetes/gitops/gitops"
+  GITOPS_CLONE_URL: "git@gitlab.example.com:kubernetes/gitops.git"
+  GITOPS_COMMIT_EMAIL: "gitlab@example.com"
+  GITOPS_COMMIT_NAME: "GitLab CI/CD"
+  GITOPS_KUBECTL_CONTEXT_TST: "kubernetes/gitops:kubernetes-agent"
+
+build_gitops_container:
+  stage: build_gitops_container
+  image:
+    name: gcr.io/kaniko-project/executor:debug
+    entrypoint: [""]
+  script:
+    - mkdir -p /kaniko/.docker
+    - echo "{\"auths\":{\"$CI_REGISTRY\":{\"username\":\"$CI_REGISTRY_USER\",\"password\":\"$CI_REGISTRY_PASSWORD\"}}}" > /kaniko/.docker/config.json
+    - /kaniko/executor
+        --context $CI_PROJECT_DIR
+        --build-arg KUBECTL_VERSION=$KUBECTL_VERSION
+        --build-arg KUSTOMIZE_VERSION=$KUSTOMIZE_VERSION
+        --dockerfile $CI_PROJECT_DIR/Containerfile
+        --destination $CI_REGISTRY_IMAGE/gitops:latest
+        --snapshotMode=redo
+        --use-new-run
+  tags:
+    - kubernetes
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main" && $CI_PIPELINE_SOURCE == "push"
+      changes:
+        - Containerfile
+
+destroy_tst:
+  stage: destroy_tst
+  image: $KUBECTL_IMAGE
+  script:
+    - kubectl config use-context ${GITOPS_KUBECTL_CONTEXT_TST}
+    - cd apps/${APPLICATION}/overlays/${ENVIRONMENT}
+    - kubectl delete -k .
+  tags:
+    - kubernetes
+  allow_failure: true
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "pipeline" && $ENVIRONMENT == "tst"'
+
+deploy_tst:
+  stage: deploy_tst
+  image: $KUBECTL_IMAGE
+  script:
+    - kubectl config use-context ${GITOPS_KUBECTL_CONTEXT_TST}
+    - cd apps/${APPLICATION}/overlays/${ENVIRONMENT}
+    - kubectl apply -k .
+  tags:
+    - kubernetes
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "pipeline" && $ENVIRONMENT == "tst"'
+
+test_tst:
+  stage: test_tst
+  image: $KUBECTL_IMAGE
+  script:
+    - echo "test tst"
+    - echo "Application name is ${APPLICATION}"
+    - echo "Tag is ${TAG}"
+    - echo "Testing application ${APPLICATION}"
+    - kubectl config use-context ${GITOPS_KUBECTL_CONTEXT_TST}
+    - kubectl get ingress -n testapp-tst
+  tags:
+    - kubernetes
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "pipeline" && $ENVIRONMENT == "tst"'
+
+refresh_acc:
+  stage: refresh_acc
+  image: $KUBECTL_IMAGE
+  before_script:
+    - mkdir -p ~/.ssh
+    - chmod 0700 ~/.ssh
+    - echo ${SSH_PRIVATE_KEY_BASE64} | base64 -d > ~/.ssh/id_ed25519
+    - chmod 0600 ~/.ssh/id_ed25519
+    - ssh-keyscan gitlab.example.com > ~/.ssh/known_hosts
+    - git remote set-url origin ${GITOPS_CLONE_URL}
+    - git config --global user.email "${GITOPS_COMMIT_EMAIL}"
+    - git config --global user.name "${GITOPS_COMMIT_NAME}"
+  script:
+    - git checkout -B main
+    - git pull origin main
+    - cd apps/${APPLICATION}/overlays/${ENVIRONMENT}
+    - kustomize edit set image $IMAGE:$TAG
+    - cat kustomization.yml
+    - git commit -am "Automated change by Gitlab CI - Promoted ${APPLICATION} to version ${TAG} in ${ENVIRONMENT}"
+    - git push origin main
+  tags:
+    - kubernetes
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "pipeline" && $ENVIRONMENT == "acc"'
+
+refresh_prd:
+  stage: refresh_prd
+  image: $KUBECTL_IMAGE
+  before_script:
+    - mkdir -p ~/.ssh
+    - chmod 0700 ~/.ssh
+    - echo ${SSH_PRIVATE_KEY_BASE64} | base64 -d > ~/.ssh/id_ed25519
+    - chmod 0600 ~/.ssh/id_ed25519
+    - ssh-keyscan gitlab.example.com > ~/.ssh/known_hosts
+    - git remote set-url origin ${GITOPS_CLONE_URL}
+    - git config --global user.email "${GITOPS_COMMIT_EMAIL}"
+    - git config --global user.name "${GITOPS_COMMIT_NAME}"
+  script:
+    - git checkout -B main
+    - git pull origin main
+    - cd apps/${APPLICATION}/overlays/${ENVIRONMENT}
+    - kustomize edit set image $IMAGE:$TAG
+    - cat kustomization.yml
+    - git commit -am "Automated change by Gitlab CI - Promoted ${APPLICATION} to version ${TAG} in ${ENVIRONMENT}"
+    - git push origin main
+  tags:
+    - kubernetes
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "pipeline" && $ENVIRONMENT == "prd"'

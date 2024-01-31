@@ -1,0 +1,37 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+metadata:
+  name: testapp
+namespace: testapp-acc
+nameSuffix: -acc
+
+resources:
+- ../../base
+
+images:
+- name: gitlab.example.com:5050/kubernetes/testapp
+  newTag: "0.1"
+
+commonLabels:
+  app: testapp-acc
+  appstack: testapp
+
+
+patches:
+- patch: |-
+    - op: replace
+      path: /spec/rules/0/host
+      value: demoapp-staging.example.com
+    - op: replace
+      path: /spec/tls/0/hosts/0
+      value: demoapp-staging.example.com
+  target:
+    kind: Ingress
+    name: testapp-ingress
+
+
+configMapGenerator:
+- behavior: replace
+  literals:
+  - ENV=acc
+  name: testapp-cm

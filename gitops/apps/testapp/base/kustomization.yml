@@ -1,0 +1,20 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+metadata:
+  name: testapp
+namespace: testapp
+
+resources:
+  - deployment.yml
+  - service.yml
+  - ingress.yml
+  - pullsecret.yml
+
+images:
+- name: gitlab.example.com:5050/kubernetes/testapp
+  newTag: add-features
+
+configMapGenerator:
+  - name: testapp-cm
+    literals:
+      - ENV=base

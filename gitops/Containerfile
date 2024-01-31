@@ -1,0 +1,27 @@
+FROM docker.io/library/alpine:3.17 AS downloader
+
+ARG TARGETOS=linux
+ARG TARGETARCH=amd64
+ARG KUBECTL_VERSION=1.27.2
+ARG KUSTOMIZE_VERSION=5.0.3
+ARG ARGOCD_VERSION=2.8.1
+
+WORKDIR /downloads
+RUN apk add --no-cache curl bash
+RUN curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl" && chmod +x kubectl
+RUN curl -LO "https://raw.githubusercontent.com/kubernetes-sigs/kustomize/master/hack/install_kustomize.sh" && chmod +x install_kustomize.sh
+RUN curl -SL "https://github.com/argoproj/argo-cd/releases/download/v${ARGOCD_VERSION}/argocd-linux-amd64" -o argocd && chmod +x argocd
+RUN ./install_kustomize.sh && chmod +x kustomize
+
+
+# Runtime
+FROM docker.io/library/alpine:3.17.0 AS runtime
+
+LABEL maintainer="Michael Trip <m.trip@atcomputing.nl>"
+
+COPY --from=downloader /downloads/kubectl /usr/local/bin/kubectl
+COPY --from=downloader /downloads/kustomize /usr/local/bin/kustomize
+COPY --from=downloader /downloads/argocd /usr/local/bin/argocd
+RUN apk --no-cache add git bash curl gettext jq openssh-client
+
+CMD ["/bin/sh"]

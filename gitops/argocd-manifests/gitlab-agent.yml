@@ -1,0 +1,31 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: gitlab-agent
+  namespace: argocd
+  labels:
+    appstack: gitlab
+    app: gitlab-agent
+spec:
+  project: default
+  sources:
+    - repoURL: https://charts.gitlab.io
+      chart: gitlab-agent
+      targetRevision: 1.23.0
+      helm:
+        releaseName: gitlab-agent
+        valueFiles:
+          - "$values/apps/gitlab-agent/values.yml"
+    - repoURL: https://gitlab.example.com/kubernetes/gitops.git
+      targetRevision: main
+      ref: values
+
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+  destination:
+    server: "https://kubernetes.default.svc"
+    namespace: gitlab-agent

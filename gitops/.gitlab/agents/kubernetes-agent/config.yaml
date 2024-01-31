@@ -1,0 +1,4 @@
+ci_access:
+  # Provide access by project
+  projects:
+    - id: kubernetes/testapp

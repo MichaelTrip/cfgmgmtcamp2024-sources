@@ -1,0 +1,200 @@
+variables:
+  APPLICATION_PORT: "8080"
+  KUBECTL_IMAGE: "gitlab.example.com:5050/kubernetes/gitops/gitops"
+  KUBECTL_CONTEXT_NAME: "kubernetes/gitops:kubernetes-agent"
+  DEVNAMESPACE: "${GITLAB_USER_LOGIN}-${CI_COMMIT_REF_SLUG}-${CI_PROJECT_NAME}-ns"
+  DEVSVC: "${GITLAB_USER_LOGIN}-${CI_COMMIT_REF_SLUG}-${CI_PROJECT_NAME}-svc"
+  DEVDEPLOYMENT: "${GITLAB_USER_LOGIN}-${CI_COMMIT_REF_SLUG}-${CI_PROJECT_NAME}"
+  DEVDOMAIN: "example.com"
+  DEVINGRESS: "${GITLAB_USER_LOGIN}-${CI_COMMIT_REF_SLUG}-${CI_PROJECT_NAME}.${DEVDOMAIN}"
+  DEVINGRESSNAME: "${GITLAB_USER_LOGIN}-${CI_COMMIT_REF_SLUG}-${CI_PROJECT_NAME}-ing"
+
+stages:
+  - destroy_previous_deployment
+  - build_app
+  - build_container
+  - tag_container
+  - test
+  - generate_manifests_pipeline
+  - deploy_pipeline
+  - test_deployment_pipeline
+  - destroy_deployment_pipeline
+  - deploy_tst_environment
+  - deploy_acc_environment
+  - deploy_prd_environment
+
+destroy_previous_deployment:
+  stage: destroy_previous_deployment
+  image:
+    name: $KUBECTL_IMAGE # should be own image from gitops repo
+    entrypoint: ['']
+  script:
+    - kubectl config use-context ${KUBECTL_CONTEXT_NAME}
+    - /bin/sh -c 'if kubectl get ns | grep ${DEVNAMESPACE}; then echo "old resources found, deleting" && kubectl delete namespace ${DEVNAMESPACE}; else exit 0; fi'
+  tags:
+    - kubernetes
+  rules:
+    - if: '$CI_COMMIT_BRANCH != "develop" && $CI_COMMIT_BRANCH != "main" && $CI_PIPELINE_SOURCE != "merge_request_event" && $CI_COMMIT_TAG == null'
+
+build_app:       # This job runs in the build stage, which runs first.
+  stage: build_app
+  image: docker.io/library/golang:1.20.4-alpine3.18
+  script:
+    - go build -o dist/
+    - echo $CI_COMMIT_TAG | grep -q -E '^$' && go build -ldflags="-X 'main.commit=$CI_COMMIT_SHORT_SHA'" -o dist/  || go build -ldflags="-X 'main.commit=$CI_COMMIT_TAG'" -o dist/
+  artifacts:
+    name: go-app
+    paths:
+      - dist/
+    expire_in: 1 hour
+  tags:
+    - kubernetes
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "push"'
+
+build_container:
+  stage: build_container
+  image:
+    name: gcr.io/kaniko-project/executor:debug
+    entrypoint: [""]
+  script:
+    - mkdir -p /kaniko/.docker
+    - echo "{\"auths\":{\"$CI_REGISTRY\":{\"username\":\"$CI_REGISTRY_USER\",\"password\":\"$CI_REGISTRY_PASSWORD\"}}}" > /kaniko/.docker/config.json
+    - /kaniko/executor
+        --context $CI_PROJECT_DIR
+        --dockerfile $CI_PROJECT_DIR/Containerfile
+        --destination $CI_REGISTRY_IMAGE:$CI_COMMIT_REF_SLUG
+        --snapshotMode=redo
+        --use-new-run
+  tags:
+    - kubernetes
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "push"'
+
+tag_container:
+  stage: tag_container
+  tags:
+    - kubernetes
+  image:
+    name: gcr.io/go-containerregistry/crane:debug
+    entrypoint: [""]
+  script:
+    - crane auth login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
+    - crane tag $CI_REGISTRY_IMAGE:$CI_COMMIT_REF_SLUG $CI_COMMIT_TAG
+  rules:
+    - if: $CI_COMMIT_TAG != null
+
+test:
+  stage: test
+  image: $KUBECTL_IMAGE
+  services:
+    - name: $CI_REGISTRY_IMAGE:$CI_COMMIT_REF_SLUG
+      alias: pipeline-app
+  script:
+    - /bin/sh -c 'until nc -z pipeline-app $APPLICATION_PORT; do sleep 1; done'
+  timeout: 5 minutes
+  tags:
+    - kubernetes
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "push"'
+
+generate_manifests:
+  stage: generate_manifests_pipeline
+  image: $KUBECTL_IMAGE
+  script:
+    - cd $CI_PROJECT_DIR
+    - mkdir -p manifests
+    - envsubst < templates/namespace.yml > manifests/1-namespace.yml
+    - envsubst < templates/deployment.yml > manifests/2-deployment.yml
+    - envsubst < templates/service.yml > manifests/3-service.yml
+    - envsubst < templates/ingress.yml > manifests/4-ingress.yml
+
+  artifacts:
+    untracked: true
+    expire_in: "1 hour"
+    paths:
+      - "manifests/"
+  tags:
+    - kubernetes
+  rules:
+    - if: '$CI_COMMIT_BRANCH != "develop" && $CI_COMMIT_BRANCH != "main" && $CI_PIPELINE_SOURCE != "merge_request_event" && $CI_COMMIT_TAG == null'
+
+deploy:
+  stage: deploy_pipeline
+  image:
+    name: $KUBECTL_IMAGE
+    entrypoint: ['']
+  script:
+    - kubectl config use-context ${KUBECTL_CONTEXT_NAME}
+    - kubectl apply -f $CI_PROJECT_DIR/manifests/ --namespace ${DEVNAMESPACE}
+    - export INGRESS_URL=`kubectl get -n ${DEVNAMESPACE} ingress -o json 2> /dev/null| jq -r '.items[] | .spec.rules[] | .host as $host | .http.paths[] | ( $host + .path)' | sort | grep -v ^/`
+    - echo "Ingress is reachable on https://$INGRESS_URL"
+  tags:
+    - kubernetes
+  rules:
+    - if: '$CI_COMMIT_BRANCH != "develop" && $CI_COMMIT_BRANCH != "main" && $CI_PIPELINE_SOURCE != "merge_request_event" && $CI_COMMIT_TAG == null'
+
+
+test_deployment:
+  stage: test_deployment_pipeline
+  image: $KUBECTL_IMAGE
+  script:
+    - /bin/sh -c 'until nc -z $DEVSVC.$DEVNAMESPACE $APPLICATION_PORT; do sleep 1; done'
+  timeout: 5 minutes
+  tags:
+    - kubernetes
+  rules:
+    - if: '$CI_COMMIT_BRANCH != "develop" && $CI_COMMIT_BRANCH != "main" && $CI_PIPELINE_SOURCE != "merge_request_event" && $CI_COMMIT_TAG == null'
+
+destroy_deployment:
+  stage: destroy_deployment_pipeline
+  image:
+    name: $KUBECTL_IMAGE
+    entrypoint: ['']
+  script:
+    - kubectl config use-context ${KUBECTL_CONTEXT_NAME}
+    - kubectl delete -f $CI_PROJECT_DIR/manifests/ --namespace ${DEVNAMESPACE}
+  tags:
+    - kubernetes
+  when: manual
+  rules:
+    - if: '$CI_COMMIT_BRANCH != "develop" && $CI_COMMIT_BRANCH != "main" && $CI_PIPELINE_SOURCE != "merge_request_event" && $CI_COMMIT_TAG == null'
+  allow_failure: false
+
+deploy_tst_environment:
+  stage: deploy_tst_environment
+  trigger: "kubernetes/gitops"
+  variables:
+    APPLICATION: "$CI_PROJECT_NAME"
+    TAG: "$CI_COMMIT_TAG"
+    ENVIRONMENT: "tst"
+  allow_failure: false
+  rules:
+    - if: $CI_COMMIT_BRANCH == "develop"
+
+deploy_acc_environment:
+  stage: deploy_acc_environment
+  trigger: "kubernetes/gitops"
+  variables:
+    APPLICATION: "$CI_PROJECT_NAME"
+    TAG: "$CI_COMMIT_TAG"
+    IMAGE: "$CI_REGISTRY_IMAGE"
+    ENVIRONMENT: "acc"
+  allow_failure: false
+  when: manual
+  rules:
+    - if: $CI_COMMIT_TAG != null
+
+deploy_prd_environment:
+  stage: deploy_prd_environment
+  trigger: "kubernetes/gitops"
+  variables:
+    APPLICATION: "$CI_PROJECT_NAME"
+    TAG: "$CI_COMMIT_TAG"
+    IMAGE: "$CI_REGISTRY_IMAGE"
+    ENVIRONMENT: "prd"
+  allow_failure: false
+  when: manual
+  rules:
+    - if: $CI_COMMIT_TAG != null
+

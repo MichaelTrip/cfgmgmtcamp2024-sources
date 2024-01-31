@@ -1,0 +1,34 @@
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: testapp
+  namespace: argocd
+spec:
+  generators:
+  - list:
+      elements:
+      - cluster: acc
+        url: https://kubernetes.default.svc
+      - cluster: prd
+        url: https://kubernetes.default.svc
+  template:
+    metadata:
+      name: 'testapp-{{cluster}}'
+    spec:
+      project: default
+      source:
+        repoURL: https://gitlab.example.com/kubernetes/gitops.git
+        targetRevision: HEAD
+        path: 'apps/testapp/overlays/{{cluster}}'
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+          allowEmpty: true
+        syncOptions:
+          - CreateNamespace=true
+          - PruneLast=true
+
+      destination:
+        server: '{{url}}'
+        namespace: 'testapp-{{cluster}}'

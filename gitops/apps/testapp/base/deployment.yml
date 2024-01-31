@@ -1,0 +1,27 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: testapp
+spec:
+  selector:
+    matchLabels:
+      app: testapp
+  replicas: 1
+  template:
+    metadata:
+      labels:
+        app: testapp
+    spec:
+      containers:
+      - name: testapp
+        image: gitlab.example.com:5050/kubernetes/testapp
+        resources: {}
+        imagePullPolicy: Always
+        ports:
+          - containerPort: 8080
+        envFrom:
+        - configMapRef:
+            name: testapp-cm
+      imagePullSecrets:
+        - name:  pullsecret
+

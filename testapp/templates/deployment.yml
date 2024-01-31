@@ -1,0 +1,18 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ${DEVDEPLOYMENT}
+spec:
+  selector:
+    matchLabels:
+      app: ${DEVDEPLOYMENT}
+  replicas: 1
+  template:
+    metadata:
+      labels:
+        app: ${DEVDEPLOYMENT}
+    spec:
+      containers:
+      - name: ${DEVDEPLOYMENT}
+        image: ${CI_REGISTRY_IMAGE}:${CI_COMMIT_REF_SLUG}
+        resources: {}

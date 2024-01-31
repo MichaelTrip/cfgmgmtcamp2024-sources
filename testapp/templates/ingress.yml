@@ -1,0 +1,27 @@
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: ${DEVDEPLOYMENT}-ingress
+  annotations:
+    nginx.ingress.kubernetes.io/backend-protocol: "HTTP"
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+
+
+spec:
+  ingressClassName: nginx
+  rules:
+  - host: ${DEVINGRESS}
+    http:
+      paths:
+      - pathType: Prefix
+        path: "/"
+        backend:
+          service:
+            name: ${DEVSVC}
+            port:
+              number: ${APPLICATION_PORT}
+  tls:
+  - hosts:
+    - ${DEVINGRESS}
+    secretName: ${GITLAB_USER_LOGIN}-${CI_COMMIT_REF_SLUG}-cert

@@ -1,0 +1,5 @@
+config:
+  kasAddress: wss://gitlab.example.com/-/kubernetes-agent/
+  token: eW91cmVhbGx5dGhpbmt0aGlzaXNhdmFsaWRzZWNyZXQ/
+image:
+  tag: v16.5.0
