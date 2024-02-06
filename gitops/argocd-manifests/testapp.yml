@@ -14,6 +14,9 @@ spec:
   template:
     metadata:
       name: 'testapp-{{cluster}}'
+      labels:
+        app: testapp-{{cluster}}
+        appstack: testapp
     spec:
       project: default
       source:
